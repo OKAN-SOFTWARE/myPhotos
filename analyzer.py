@@ -163,12 +163,12 @@ def _average_linkage(embeddings: np.ndarray, threshold: float) -> list[list[int]
         idx = np.flatnonzero(active)
         if len(idx) < 2:
             break
-        sub = sim[np.ix_(idx, idx)]
-        flat = int(np.argmax(sub))
-        i_, j_ = divmod(flat, len(idx))
-        if sub[i_, j_] < threshold:
+        # Retired clusters have -2.0 in their entire row/column, below any
+        # cosine similarity. Scan the existing matrix without copying a new
+        # active-only submatrix on every merge.
+        i, j = divmod(int(np.argmax(sim)), n)
+        if sim[i, j] < threshold:
             break
-        i, j = int(idx[i_]), int(idx[j_])
 
         merged_row = (sizes[i] * sim[i] + sizes[j] * sim[j]) / (sizes[i] + sizes[j])
         sim[i, :] = merged_row

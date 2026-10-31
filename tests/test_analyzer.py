@@ -21,6 +21,37 @@ def _unit(dim, axis, noise_seed=None):
     return vec / np.linalg.norm(vec)
 
 
+def _reference_average_linkage(embeddings, threshold):
+    """Pre-optimization implementation: an active-only submatrix each merge."""
+    n = len(embeddings)
+    sim = embeddings @ embeddings.T
+    np.fill_diagonal(sim, -2.0)
+    sizes = np.ones(n)
+    members = {i: [i] for i in range(n)}
+    active = np.ones(n, dtype=bool)
+
+    while True:
+        idx = np.flatnonzero(active)
+        if len(idx) < 2:
+            break
+        sub = sim[np.ix_(idx, idx)]
+        i_, j_ = divmod(int(np.argmax(sub)), len(idx))
+        if sub[i_, j_] < threshold:
+            break
+        i, j = int(idx[i_]), int(idx[j_])
+        merged = (sizes[i] * sim[i] + sizes[j] * sim[j]) / (sizes[i] + sizes[j])
+        sim[i, :] = merged
+        sim[:, i] = merged
+        sim[i, i] = -2.0
+        sim[j, :] = -2.0
+        sim[:, j] = -2.0
+        sizes[i] += sizes[j]
+        members[i].extend(members.pop(j))
+        active[j] = False
+
+    return [members[i] for i in np.flatnonzero(active)]
+
+
 class TestScan:
     def test_recursive_sorted_and_filtered(self, tmp_path):
         (tmp_path / "sub").mkdir()
@@ -53,6 +84,25 @@ class TestAverageLinkage:
         embeddings = np.stack([_unit(4, i) for i in range(4)])
         clusters = _average_linkage(embeddings, threshold=0.3)
         assert len(clusters) == 4
+
+    def test_matches_original_merges_on_randomized_embeddings(self):
+        # Check exact cluster memberships and ordering after repeated merges,
+        # including the tie-breaking implied by row-major argmax.
+        for seed in range(5):
+            rng = np.random.default_rng(seed)
+            for count in (6, 24):
+                embeddings = rng.normal(size=(count, 12)).astype(np.float32)
+                embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+                for threshold in (-0.25, 0.2, 0.6):
+                    assert _average_linkage(
+                        embeddings, threshold
+                    ) == _reference_average_linkage(embeddings, threshold)
+
+    def test_identical_embeddings_keep_original_tie_breaking(self):
+        embeddings = np.stack([_unit(4, 0)] * 5 + [_unit(4, 1)] * 3)
+        clusters = _average_linkage(embeddings, 0.3)
+        assert clusters == [[0, 1, 2, 3, 4], [5, 6, 7]]
+        assert clusters == _reference_average_linkage(embeddings, 0.3)
 
 
 def _with_similarity(cos):
